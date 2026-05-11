@@ -17,8 +17,7 @@ COPY source.config.ts ./
 COPY content ./content
 
 # Install dependencies with frozen lockfile
-RUN pnpm i --frozen-lockfile
-
+RUN pnpm i --frozen-lockfile --allow-build-scripts
 
 # Rebuild the source code only when needed
 FROM base AS builder
