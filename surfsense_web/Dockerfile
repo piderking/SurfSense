@@ -1,13 +1,12 @@
 FROM node:22-alpine AS base
 
+# Pin pnpm version to v9 to ensure compatibility with SurfSense's build scripts
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
 # Install dependencies only when needed
 FROM base AS deps
-# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-
-# Install pnpm
-RUN corepack enable pnpm
 
 # Copy package files
 COPY package.json pnpm-lock.yaml* .npmrc* ./
@@ -16,19 +15,14 @@ COPY package.json pnpm-lock.yaml* .npmrc* ./
 COPY source.config.ts ./
 COPY content ./content
 
-# Install dependencies with frozen lockfile
-RUN pnpm i --frozen-lockfile --allow-build-scripts
+# Install dependencies with frozen lockfile (No flags needed for pnpm 9)
+RUN pnpm i --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 
-# Enable pnpm
-RUN corepack enable pnpm
-
 # Build with placeholder values for NEXT_PUBLIC_* variables.
-# These are replaced at container startup by docker-entrypoint.js
-# with real values from the container's environment variables.
 ARG NEXT_PUBLIC_FASTAPI_BACKEND_URL=__NEXT_PUBLIC_FASTAPI_BACKEND_URL__
 ARG NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE=__NEXT_PUBLIC_FASTAPI_BACKEND_AUTH_TYPE__
 ARG NEXT_PUBLIC_ETL_SERVICE=__NEXT_PUBLIC_ETL_SERVICE__
@@ -44,11 +38,6 @@ ENV NEXT_PUBLIC_DEPLOYMENT_MODE=$NEXT_PUBLIC_DEPLOYMENT_MODE
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Next.js collects completely anonymous telemetry data about general usage.
-# Learn more here: https://nextjs.org/telemetry
-# Uncomment the following line in case you want to disable telemetry during the build.
-# ENV NEXT_TELEMETRY_DISABLED=1
-
 RUN pnpm run build
 
 # Production image, copy all the files and run next
@@ -56,30 +45,20 @@ FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-# Uncomment the following line in case you want to disable telemetry during runtime.
-# ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
-
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone/app/ ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Entrypoint scripts for runtime env var substitution
 COPY --chown=nextjs:nodejs docker-entrypoint.js ./docker-entrypoint.js
 COPY --chown=nextjs:nodejs --chmod=755 docker-entrypoint.sh ./docker-entrypoint.sh
 
 USER nextjs
-
 EXPOSE 3000
-
 ENV PORT=3000
-
-# server.js is created by next build from the standalone output
-# https://nextjs.org/docs/pages/api-reference/config/next-config-js/output
 ENV HOSTNAME="0.0.0.0"
+
 ENTRYPOINT ["/bin/sh", "./docker-entrypoint.sh"]
